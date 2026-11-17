@@ -1,0 +1,17 @@
+# Let git normalise line endings for text files: LF in the repository,
+# and the platform's native ending (CRLF on Windows) in the working tree.
+* text=auto
+
+# Windows batch files MUST keep CRLF or cmd.exe can mis-parse labels/blocks.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Shell scripts MUST keep LF or Linux/macOS fails with "bad interpreter: /bin/sh^M".
+*.sh  text eol=lf
+# The Maven wrapper script has no .sh extension, so it needs its own rule.
+/mvnw text eol=lf
+
+# Binary files: never touch
+*.jar binary
+*.png binary
+*.mv.db binary

@@ -1,0 +1,4 @@
+# Real TMDB API. TMDB allows roughly 40-50 requests/second per IP, we stay far below that.
+moviepicker:
+  tmdb:
+    request-interval: PT0.25S   # ~4 req/s: polite, and still fast enough for 4 lists x 3 pages

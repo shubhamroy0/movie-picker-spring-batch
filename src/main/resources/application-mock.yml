@@ -1,0 +1,4 @@
+# No network, no token. Data comes from src/main/resources/fixtures/*.json (see MockTmdbClient).
+moviepicker:
+  tmdb:
+    request-interval: PT0S

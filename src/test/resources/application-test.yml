@@ -1,0 +1,14 @@
+# Used by tests together with the "mock" profile: @ActiveProfiles({"mock", "test"}).
+# In-memory DB so tests never touch ./data/moviedb and always start empty.
+# ${random.uuid}: every Spring context gets its OWN database, so test classes with different settings (and therefore
+# different cached contexts) cannot see or drop each other's tables.
+spring:
+  datasource:
+    url: jdbc:h2:mem:${random.uuid};DB_CLOSE_DELAY=-1
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+moviepicker:
+  sync:
+    enabled: false   # tests trigger jobs explicitly; no background scheduling

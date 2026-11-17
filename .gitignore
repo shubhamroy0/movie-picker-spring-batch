@@ -1,0 +1,33 @@
+# Build output
+target/
+!**/src/main/**/target/
+!**/src/test/**/target/
+.mvn/wrapper/maven-wrapper.jar
+HELP.md
+
+# Local H2 database files (they are re-created by the app) -- never commit data
+data/
+*.mv.db
+*.trace.db
+*.lock.db
+
+# Secrets and local overrides -- the TMDB token must NEVER be committed
+.env
+.env.*
+*.local.*
+application-local.yml
+application-local.properties
+
+# IDEs
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings/
+.springBeans
+.sts4-cache

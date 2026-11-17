@@ -1,0 +1,130 @@
+{
+  "info": {
+    "name": "Movie Picker",
+    "description": "Movie Picker REST API (Spring Boot + Spring Batch). Import together with local.postman_environment.json and select that environment. Run 'Start sync' first so there is data. This product uses the TMDB API but is not endorsed or certified by TMDB.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Jobs",
+      "item": [
+        {
+          "name": "Start sync (202 + executionId saved)",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+              "const body = pm.response.json();",
+              "pm.environment.set('executionId', body.executionId);",
+              "pm.test('Location header present', () => pm.response.to.have.header('Location'));"
+            ] }
+          }],
+          "request": { "method": "POST", "header": [], "url": "{{baseUrl}}/api/jobs/sync",
+            "description": "Launches syncMoviesJob asynchronously. 409 if one is already running." }
+        },
+        {
+          "name": "Get execution (poll until COMPLETED)",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('has steps', () => pm.expect(pm.response.json().steps).to.be.an('array'));"
+            ] }
+          }],
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/jobs/executions/{{executionId}}" }
+        },
+        {
+          "name": "List recent executions",
+          "request": { "method": "GET", "header": [],
+            "url": { "raw": "{{baseUrl}}/api/jobs/executions?limit=10", "host": ["{{baseUrl}}"],
+              "path": ["api", "jobs", "executions"], "query": [{ "key": "limit", "value": "10" }] } }
+        },
+        {
+          "name": "Restart execution (FAILED/STOPPED only)",
+          "request": { "method": "POST", "header": [], "url": "{{baseUrl}}/api/jobs/executions/{{executionId}}/restart" }
+        },
+        {
+          "name": "Stop execution (graceful)",
+          "request": { "method": "POST", "header": [], "url": "{{baseUrl}}/api/jobs/executions/{{executionId}}/stop" }
+        }
+      ]
+    },
+    {
+      "name": "Scheduler",
+      "item": [
+        { "name": "Status", "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/scheduler" } },
+        { "name": "Pause", "request": { "method": "POST", "header": [], "url": "{{baseUrl}}/api/scheduler/pause" } },
+        { "name": "Resume", "request": { "method": "POST", "header": [], "url": "{{baseUrl}}/api/scheduler/resume" } }
+      ]
+    },
+    {
+      "name": "Movies",
+      "item": [
+        {
+          "name": "Search (page, sort, filters)",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('paged shape', () => { const b = pm.response.json(); pm.expect(b).to.have.property('content'); pm.expect(b).to.have.property('totalElements'); });"
+            ] }
+          }],
+          "request": { "method": "GET", "header": [],
+            "url": { "raw": "{{baseUrl}}/api/movies?genre=Science Fiction&minRating=7&sort=voteAverage,desc&page=0&size=10",
+              "host": ["{{baseUrl}}"], "path": ["api", "movies"],
+              "query": [
+                { "key": "genre", "value": "Science Fiction", "description": "name or TMDB genre id" },
+                { "key": "minRating", "value": "7" },
+                { "key": "year", "value": "", "disabled": true },
+                { "key": "language", "value": "", "disabled": true },
+                { "key": "q", "value": "", "disabled": true, "description": "title contains" },
+                { "key": "sort", "value": "voteAverage,desc" },
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "10" }
+              ] } }
+        },
+        { "name": "One movie (tmdbId)", "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/movies/278" } },
+        {
+          "name": "Trending (with rank movement)",
+          "request": { "method": "GET", "header": [],
+            "url": { "raw": "{{baseUrl}}/api/movies/trending?list=trending_day", "host": ["{{baseUrl}}"],
+              "path": ["api", "movies", "trending"], "query": [{ "key": "list", "value": "trending_day" }] } }
+        },
+        {
+          "name": "Picks (weighted score)",
+          "request": { "method": "GET", "header": [],
+            "url": { "raw": "{{baseUrl}}/api/movies/picks?limit=5", "host": ["{{baseUrl}}"],
+              "path": ["api", "movies", "picks"],
+              "query": [{ "key": "limit", "value": "5" }, { "key": "genre", "value": "", "disabled": true }] } }
+        },
+        { "name": "Genres", "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/genres" } }
+      ]
+    },
+    {
+      "name": "Errors (ProblemDetail demos)",
+      "item": [
+        {
+          "name": "404 unknown movie",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('404 problem+json', () => { pm.response.to.have.status(404); pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json'); });" ] } }],
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/movies/987654321" }
+        },
+        {
+          "name": "400 bad sort field",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/movies?sort=overview,asc" }
+        },
+        {
+          "name": "400 minRating out of range",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/movies?minRating=11" }
+        }
+      ]
+    },
+    {
+      "name": "Ops",
+      "item": [
+        { "name": "About (TMDB attribution)", "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/about" } },
+        { "name": "Health (incl. last sync)", "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/actuator/health" } }
+      ]
+    }
+  ]
+}

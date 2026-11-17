@@ -1,0 +1,5 @@
+# Fast feedback loop for learning: run the sync every 30 seconds instead of every 5 minutes.
+moviepicker:
+  sync:
+    interval: PT30S
+    initial-delay: PT5S

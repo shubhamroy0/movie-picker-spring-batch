@@ -1,0 +1,89 @@
+spring:
+  application:
+    name: movie-picker
+
+  # A *default* profile only applies when NO profile is active. So:
+  #   (no profile)        -> "tmdb" (real API)
+  #   mock / mock,demo    -> default is ignored, mock mode
+  # Beans that talk to the real API are therefore guarded with @Profile("!mock"), not @Profile("tmdb"),
+  # so that e.g. `-Dspring-boot.run.profiles=demo` alone still gets a working client.
+  profiles:
+    default: tmdb
+
+  datasource:
+    # Relative path -> ./data/moviedb.mv.db next to where the app is started (the project root).
+    # AUTO_SERVER=TRUE: H2 normally locks the file for ONE process. With AUTO_SERVER the first process
+    # also starts a tiny TCP server, so IntelliJ/DBeaver (a 2nd process) can open the same DB concurrently.
+    url: jdbc:h2:file:./data/moviedb;AUTO_SERVER=TRUE
+    username: sa
+    password: ""
+
+  h2:
+    console:
+      enabled: true          # http://localhost:8080/h2-console
+
+  jpa:
+    open-in-view: false      # no lazy-loading in controllers; forces us to return DTOs
+    hibernate:
+      ddl-auto: update       # DEV ONLY. Prod: Flyway/Liquibase migrations + ddl-auto=validate
+    properties:
+      hibernate:
+        jdbc.batch_size: 20          # = our chunk size, so one chunk -> one JDBC batch
+        order_inserts: true
+        order_updates: true
+        format_sql: true
+
+  data:
+    web:
+      pageable:
+        default-page-size: 20
+        max-page-size: 50      # a client asking ?size=100000 silently gets 50: protects memory and the DB
+
+  batch:
+    job:
+      enabled: false        # do NOT auto-run every Job bean at startup; we launch via JobOperator
+    jdbc:
+      # Create the BATCH_* tables at startup. Batch's schema-h2.sql is plain CREATE TABLE (no IF NOT EXISTS); on a
+      # persistent DB file Boot's initializer tolerates "already exists" errors, so restarts work (verified by
+      # restarting on an existing ./data/moviedb). In production you would own the schema via Flyway/Liquibase
+      # and set this to "never".
+      initialize-schema: always
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,scheduledtasks
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.moviepicker: INFO
+    org.springframework.batch: INFO
+
+moviepicker:
+  tmdb:
+    base-url: https://api.themoviedb.org
+    api-token: ${TMDB_API_TOKEN:}     # ONLY source of the secret. Never hard-code it.
+    language: en-US
+    region: US
+    pages-per-list: 3
+    lists: [trending_day, now_playing, popular, top_rated]
+    connect-timeout: PT5S
+    read-timeout: PT15S
+    request-interval: PT0S            # min gap between calls; real API profile raises it
+    retry:
+      max-attempts: 4
+      initial-backoff: PT1S
+      multiplier: 2.0
+      max-backoff: PT30S
+  sync:
+    enabled: true
+    interval: PT5M
+    initial-delay: PT10S
+    chunk-size: 20
