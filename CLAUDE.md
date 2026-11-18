@@ -3,6 +3,9 @@
 Guidance for Claude Code (and humans) working in this repository. Read this first.
 *(For Antigravity and Gemini agents, see linked instructions in [GEMINI.md](file:///e:/Projects/Movie%20API%20DB%20java%20practice/GEMINI.md).)*
 
+> **Agent Instructions Synchronization Rule:**
+> [GEMINI.md](file:///e:/Projects/Movie%20API%20DB%20java%20practice/GEMINI.md) is the companion instruction file for Antigravity and Gemini agents. Whenever changes are made to `CLAUDE.md` (such as new Spring Batch gotchas, architecture conventions, dependencies, or phase deliverables like [PR #1: Add AOP aspects](https://github.com/shubhamroy0/movie-picker-spring-batch/pull/1)), `GEMINI.md` **must also be updated** to ensure complete parity across both Claude Code and Antigravity/Gemini agent workflows.
+
 ## 1. Project purpose
 
 **Movie Picker** is a *learning project* combining **Spring Batch** and **Spring Boot**, built to prepare for Java/Spring interviews.
