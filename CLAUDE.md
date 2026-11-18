@@ -1,6 +1,10 @@
 # CLAUDE.md — Movie Picker
 
 Guidance for Claude Code (and humans) working in this repository. Read this first.
+*(For Antigravity and Gemini agents, see linked instructions in [GEMINI.md](file:///e:/Projects/Movie%20API%20DB%20java%20practice/GEMINI.md).)*
+
+> **Agent Instructions Synchronization Rule:**
+> [GEMINI.md](file:///e:/Projects/Movie%20API%20DB%20java%20practice/GEMINI.md) is the companion instruction file for Antigravity and Gemini agents. Whenever changes are made to `CLAUDE.md` (such as new Spring Batch gotchas, architecture conventions, dependencies, or phase deliverables like [PR #1: Add AOP aspects](https://github.com/shubhamroy0/movie-picker-spring-batch/pull/1)), `GEMINI.md` **must also be updated** to ensure complete parity across both Claude Code and Antigravity/Gemini agent workflows.
 
 ## 1. Project purpose
 
@@ -19,7 +23,7 @@ Data attribution (required by TMDB terms): *"This product uses the TMDB API but 
 | Language / build | Java **21** target (`maven.compiler.release=21`; the dev machine has JDK 25, which compiles fine with `--release 21`), Maven via **wrapper** (`mvnw.cmd`) |
 | Framework | **Spring Boot 4.1.2** (latest stable) → Spring Framework **7.0.x**, **Spring Batch 6.0.6**, Hibernate **7.x**, Jackson **3**, Jakarta EE, JUnit 6 |
 | Batch starter | `spring-boot-starter-batch-jdbc` (**not** plain `spring-boot-starter-batch`) |
-| Other starters | `web`, `data-jpa`, `validation`, `actuator` |
+| Other starters | `web`, `data-jpa`, `validation`, `actuator`, `aspectj` (AOP, Phase 10) |
 | Database | H2 **file** DB: `jdbc:h2:file:./data/moviedb;AUTO_SERVER=TRUE`, H2 console enabled |
 | HTTP client | Spring **`RestClient`** (optionally a declarative `@HttpExchange` interface on top) |
 | Tests | `spring-boot-starter-test`, `spring-batch-test`, stub HTTP server (WireMock vs `MockRestServiceServer` — chosen and justified in Phase 1/9 after checking Boot 4 compatibility) |
@@ -46,6 +50,12 @@ Always check versions on start.spring.io / Maven Central before changing them. D
 15. **Partitioning:** worker steps are named `<workerStep>:<partitionKey>`; the built-in `DefaultStepExecutionAggregator` sums framework counters but NOT custom `ExecutionContext` values (`CounterAggregator`); each worker needs its own `@StepScope` reader/writer (`#{stepExecutionContext[...]}`); exclude `:` step names when summarising to avoid double counting.
 16. **Failed-step `exitDescription`** starts with a framework wrapper (`Unable to process chunk`); the root cause is the last `Caused by:` line.
 17. **Spring MVC:** do not declare `@ExceptionHandler` methods for exceptions `ResponseEntityExceptionHandler` already handles (e.g. `HttpMessageNotReadableException`, type mismatches) — startup fails with "Ambiguous @ExceptionHandler method". Constraints on controller parameters raise `HandlerMethodValidationException` (Spring 6.1+/7), not `ConstraintViolationException`.
+18. **AOP (Boot 4):** the starter is `spring-boot-starter-aspectj` (was `starter-aop`). Spring AOP = runtime CGLIB proxies (Boot default `proxy-target-class=true`), NOT bytecode weaving. An `@Aspect` class must also be a bean (`@Component`) or it does nothing.
+19. **Self-invocation is not advised:** `this.method()` bypasses the proxy (same reason `@Transactional`/`@Async` fail on internal calls). `SyncJobService.startSync → startSyncAsync` is deliberately audited once. Do not "fix" it by self-injection; it is the lesson (`AspectsIntegrationTest`).
+20. **Always give aspects an explicit `@Order`** (lower = outer; 10 timing, 20 request log, 30 audit, 40 metrics). `@Transactional`'s advisor has the lowest precedence, so ours wrap outside the transaction.
+21. **An `@Around` advice must call `proceed()` and rethrow the original exception unchanged**, or it changes the contract of the method (REST status codes depend on the exception types). Prefer the weakest advice type that works.
+22. **Aspects cover services, controllers and the TMDB client only.** Do not put pointcuts on Spring Batch internals or `@StepScope` beans. Keep metric tags low-cardinality, and never log arguments in an aspect that could cover secrets (the token never flows through any advised method).
+23. **New aspect checklist:** package `com.moviepicker.aop`; a named pointcut in `Pointcuts` if reused; a no-Spring `AspectJProxyFactory` test plus an assertion of the effect in `AspectsIntegrationTest` (including the negative case).
 
 ## 4. Environment — Windows 11 + PowerShell
 
@@ -91,6 +101,7 @@ src/main/java/com/moviepicker/
   scheduler/     @Scheduled trigger, pause/resume state, overlap guard
   service/       business logic used by controllers
   web/           controllers, response DTOs, ProblemDetail exception handler
+  aop/           aspects (@Aspect): timing, request log, job audit, TMDB metrics + shared Pointcuts
 src/main/resources/  application.yml (+ application-{tmdb,mock,demo}.yml), fixtures/
 src/test/java/...    mirrors main
 docs/            LEARNING_LOG.md, INTERVIEW_PREP.md

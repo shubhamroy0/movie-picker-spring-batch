@@ -3,3 +3,9 @@ moviepicker:
   sync:
     interval: PT30S
     initial-delay: PT5S
+
+# Phase 10 (AOP): show one DEBUG line per REST call from ApiRequestLogAspect ("-> MovieController.get(..)", "<- ...", "!! ...").
+# Off in the normal profile because a log line per request is noise in production.
+logging:
+  level:
+    com.moviepicker.aop.ApiRequestLogAspect: DEBUG

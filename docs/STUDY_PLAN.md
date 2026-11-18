@@ -19,7 +19,7 @@ If you can't do beat 2, you memorised a fact, not the theory: go to the theory m
 
 ---
 
-## 2. Schedule (about 5 sessions of 60–90 min)
+## 2. Schedule (about 6 sessions of 60–90 min)
 
 | Session | Do | Done when |
 |---|---|---|
@@ -27,7 +27,8 @@ If you can't do beat 2, you memorised a fact, not the theory: go to the theory m
 | **2 — Failure handling** | Phase 3–4. Run demos B and C from the README. Answer Phase 3–4 questions. Labs L3–L4. | You can explain retry vs skip vs filter without hesitation |
 | **3 — State: scheduling and restart** | Phase 5–6. Do the failure/restart demo (README demo A). Answer Phase 5–6 questions. Lab L5. | You can narrate "failed at page 40 of 100" end to end |
 | **4 — Web, JPA, scaling** | Phase 7–8. Click through the Postman collection; read `SerializedUpsertWriter`. Answer Phase 7–8 questions. Labs L6–L7. | You can explain the partition race and its fix |
-| **5 — Interview simulation** | `docs/INTERVIEW_PREP.md`: pitch ×3, Q1–Q65 cover-and-recite, scenarios S1–S4 out loud, Phase 9 questions. | You answer 80 % of Q&A without peeking |
+| **5 — AOP (Phase 10)** | Read LEARNING_LOG Phase 10, then the five files in `aop/` in this order: `Pointcuts`, `ExecutionTimeAspect`, `ApiRequestLogAspect`, `JobAuditAspect`, `TmdbCallMetricsAspect`. Run the app with `mock,demo`, call the API, watch the logs, `/api/audit` and `/actuator/metrics/moviepicker.tmdb.calls`. Labs L9–L12. Answer Phase 10 questions. | You can explain a proxy, self-invocation and `@Order` with an example from this repo |
+| **6 — Interview simulation** | `docs/INTERVIEW_PREP.md`: pitch ×3, Q1–Q82 cover-and-recite, scenarios S1–S8 out loud, Phase 9 and 10 questions. | You answer 80 % of Q&A without peeking |
 
 Spaced repetition: re-do the Q&A you missed after 1 day, 3 days, 1 week.
 
@@ -49,6 +50,7 @@ Spaced repetition: re-do the Q&A you missed after 1 day, 3 days, 1 week.
 | **REST design** | DTOs, Specifications, paging caps, ProblemDetail, 202/409 semantics | `web/*`, `MovieSpecifications` | L6 |
 | **Scaling** | threaded step vs partitioning vs remote chunking vs parallel steps; disjoint partition keys; rate limits cap parallelism | `PartitionedFetchConfig` | L7 |
 | **Testing** | real DB + real socket stub; per-context in-memory DB; repeat concurrency tests | `src/test/**` | L8 |
+| **AOP** | aspect/advice/pointcut/join point/weaving; proxy (CGLIB vs JDK); five advice types; `@Order`; self-invocation; what can't be advised; `@Transactional` is AOP | `aop/*`, `AspectsIntegrationTest`, `ExecutionTimeAspectTest` | L9–L12 |
 
 Reading list (official docs, verify against **Batch 6**, not older tutorials): Spring Batch reference — *Domain Language*, *Configuring a Step*
 (chunk-oriented, fault tolerance), *Scaling and Parallel Processing*, *Job restart*; Spring Boot reference — *Batch*, *Task Execution and Scheduling*, *Actuator health*;
@@ -68,6 +70,10 @@ Spring Framework — *Resilience (retry)*, *Method validation*, *ProblemDetail*;
 | L6 | Turn on `spring.jpa.show-sql` / `logging.level.org.hibernate.SQL=DEBUG`; call `/api/movies?size=20`; then remove `@BatchSize` from `Movie` | ~4 statements vs ~41 (N+1) |
 | L7 | In `PartitionedFetchConfig`, pass the raw `writer` instead of `new SerializedUpsertWriter(...)`; run `MovieSyncJobPartitionedTest` | The job FAILS with unique-key / lock-timeout errors (the Phase 8 race) |
 | L8 | Break one assertion on purpose in `RestApiTest` (e.g. expect 200 for an unknown movie) | Read the MockMvc failure output: it prints the actual ProblemDetail |
+| L9 | Run with `mock,demo`; call `GET /api/movies/278` then `GET /api/movies/999999999`; read the console | `-> / <- / !!` lines from `ApiRequestLogAspect`; the 404 case shows the raw `MovieNotFoundException` *before* it becomes a ProblemDetail |
+| L10 | In `ExecutionTimeAspect.time(..)` delete the `joinPoint.proceed()` call (return `null`) and call `GET /api/movies` | The endpoint returns an empty/`null` body: an `@Around` that never proceeds silently disables the method. Restore it afterwards |
+| L11 | In `SyncJobService.startSync`, replace `startSyncAsync(trigger)` with a call that goes through the proxy (inject `SyncJobService` into itself with `@Lazy`) and run `AspectsIntegrationTest` | Expected (not run by me): the audit test now fails because it sees **two** entries (`startSync` and `startSyncAsync`): you have defeated the self-invocation rule. Revert it |
+| L12 | Change `@Order(10)` on `ExecutionTimeAspect` to `@Order(Ordered.LOWEST_PRECEDENCE)`; call `GET /api/movies?size=50` several times and compare the logged milliseconds | The aspect now ties with the transaction advisor, so it may no longer include transaction commit time (order between equal precedences is undefined: that is the lesson: always set an explicit order) |
 
 ---
 
@@ -147,7 +153,13 @@ chunk 8: read 3 (the rest) → write → COMMIT          => 8 commits  (ceil(143
 2. **"Fails when 11 records are bad" cheaply.** Lower the limit in the test (`skip-limit=1`) and use the two existing corrupt fixture records (`corrupt-records=true`) → assert the step FAILED; or inject a stub reader. (`MovieSyncJobSkipLimitTest` does the first.)
 3. **Multi-pod test.** Two app contexts (or processes) against one real shared database (e.g. Testcontainers Postgres), launched concurrently; assert exactly one runs and the other is refused. The current suite is one JVM and in-memory H2, so it cannot prove cross-JVM locking.
 
-### The scenario questions (S1–S4 in `INTERVIEW_PREP.md`)
+### Phase 10
+
+1. **One audit entry, not two.** Spring AOP intercepts calls that arrive through the *proxy*. The scheduler (another bean) calls `startSync` on the proxy, so the advice runs. Inside, `startSync` calls `this.startSyncAsync(..)` on the real object, not the proxy, so the advice does not run for it. The pointcut matches both methods; the call path decides which one is intercepted.
+2. **`@Order(10)` vs `LOWEST_PRECEDENCE`.** Lower number = outer layer. At 10 the aspect wraps the `@Transactional` proxy, so its timing includes opening and committing the transaction. At `LOWEST_PRECEDENCE` it ties with the transaction advisor, and the relative order of equal precedences is not guaranteed, so what the timing includes is undefined. (I have not measured which one wins in this build; the point is to set an explicit order.)
+3. **9 vs 12 timings.** `ResilientTmdbClient` counts each logical call once; `MockTmdbClient` (the raw client it wraps) counts every attempt. Twelve attempts for nine calls means three retries happened (assuming every call eventually returned). Filter by `outcome:error` on the raw client to see which attempts failed.
+
+### The scenario questions (S1–S8 in `INTERVIEW_PREP.md`; S1–S4 summarised here)
 
 Memorise the *shape* of each answer:
 * **429 halfway:** transient → client retries with backoff/`Retry-After` → if exhausted the step fails with progress saved → restart; mitigate with throttling.
@@ -166,5 +178,8 @@ Memorise the *shape* of each answer:
 - [ ] Explain JobInstance identity with `runAt` and `trigger`.
 - [ ] Explain the rolling-page trap and the partition race, each in 45 seconds.
 - [ ] List four ways to scale a step and when to use each.
+- [ ] Explain how a Spring AOP proxy works and why `this.method()` is not advised, using `SyncJobService` as the example.
+- [ ] Name the five advice types and pick the right one for "log", "audit" and "cache".
+- [ ] Say why `@Transactional` and our aspects share one proxy and what `@Order` decides.
 - [ ] Give the 2-minute pitch without notes.
 - [ ] Name three limits of the project honestly (real TMDB untested, JVM-local locks, `ddl-auto=update`).

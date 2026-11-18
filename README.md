@@ -4,7 +4,7 @@ A learning project that combines **Spring Batch** and **Spring Boot**.
 A scheduled Spring Batch job (`syncMoviesJob`) pulls movies from the **TMDB API** and upserts them into an **H2** database
 through JPA/Hibernate; a Spring Boot REST API serves the data and controls the job, so you can drive everything from Postman.
 
-> **Status:** all 9 phases implemented. Study material: [docs/LEARNING_LOG.md](docs/LEARNING_LOG.md) (what each phase built and
+> **Status:** all 10 phases implemented (Phase 10 = aspect-oriented programming, see [AOP](#aop-aspects-phase-10)). Study material: [docs/LEARNING_LOG.md](docs/LEARNING_LOG.md) (what each phase built and
 > why), [docs/INTERVIEW_PREP.md](docs/INTERVIEW_PREP.md) (architecture, Q&A, scenarios, 2-minute pitch) and
 > [docs/STUDY_PLAN.md](docs/STUDY_PLAN.md) (how to study it, plus the answers to every check question).
 
@@ -152,11 +152,36 @@ Invoke-RestMethod "http://localhost:8080/api/jobs/executions/$($r.executionId)" 
 | `GET /api/jobs/executions[/{id}]` | History / one execution with its steps and counters |
 | `POST /api/jobs/executions/{id}/restart` · `/stop` | Restart a FAILED/STOPPED execution · stop a running one gracefully |
 | `GET /api/scheduler` · `POST .../pause` · `.../resume` | Scheduler status and pause switch |
+| `GET /api/audit?limit=` | In-memory audit trail of launch / restart / stop / pause / resume (written by `JobAuditAspect`), newest first |
 | `GET /api/about` | Attribution |
+| `GET /actuator/metrics/moviepicker.tmdb.calls` | Timer written by `TmdbCallMetricsAspect` (`?tag=client:ResilientTmdbClient`) |
 | `GET /actuator/health` | Health incl. the custom last-sync indicator |
 | `/swagger-ui/index.html` | OpenAPI UI |
 
 Errors are RFC 9457 `application/problem+json`: 400 bad input, 404 not found, 409 wrong state, 500 unexpected.
+
+## AOP (aspects, Phase 10)
+
+Cross-cutting behaviour lives in `src/main/java/com/moviepicker/aop`, not inside the business classes. Spring wraps the
+matching beans in proxies at startup; the business code does not know it is being advised.
+
+| Aspect | Advice | What it does | See it |
+|---|---|---|---|
+| `ExecutionTimeAspect` + `@LogExecutionTime` | `@Around` | times `MovieService.search/trending/picks`; WARN above `slowMs` | log: `MovieService.search(..) took 12 ms` |
+| `ApiRequestLogAspect` | `@Before`, `@AfterReturning`, `@AfterThrowing` | one DEBUG line in/out/failed per controller call | run with the `demo` profile |
+| `JobAuditAspect` + `AuditLog` | `@Around` | records every launch/restart/stop/pause/resume with its outcome | `GET /api/audit`, logger `AUDIT` |
+| `TmdbCallMetricsAspect` | `@Around` | Micrometer timer on every `TmdbClient` call | `GET /actuator/metrics/moviepicker.tmdb.calls` |
+
+```powershell
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=mock,demo"
+curl.exe -s -X POST http://localhost:8080/api/jobs/sync
+curl.exe -s http://localhost:8080/api/audit
+curl.exe -s http://localhost:8080/api/movies/999999999        # watch the "!! ... threw MovieNotFoundException" log line
+curl.exe -s "http://localhost:8080/actuator/metrics/moviepicker.tmdb.calls"
+```
+
+Theory (vocabulary, the five advice types, proxies, `@Order`, the self-invocation trap, what Spring AOP cannot advise):
+[docs/LEARNING_LOG.md](docs/LEARNING_LOG.md) Phase 10. Tests: `ExecutionTimeAspectTest` (no Spring) and `AspectsIntegrationTest`.
 
 ## Postman
 

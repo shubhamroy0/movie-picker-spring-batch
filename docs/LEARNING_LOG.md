@@ -690,3 +690,107 @@ Trade-offs to be able to explain: (1) the lock is JVM-local; (2) the chunk is no
 1. Why is the HTTP client tested against a real socket server rather than a mocked `RestClient`?
 2. How would you test "the job fails when 11 records are bad" without 11 fixture files?
 3. What would you add to test the multi-pod scenario, and why can't the current suite prove it?
+
+---
+
+## Phase 10 — Aspect-oriented programming (AOP)
+
+### What we are building, in plain English
+Some behaviour does not belong to any one class: *"time this call"*, *"write down who launched the job"*, *"count every TMDB
+request"*. If you put it inside the business classes you repeat it everywhere and bury the real logic. AOP lets you write it
+**once**, in an **aspect**, and say *where* it applies with a **pointcut**. The business code stays clean and does not even know.
+
+Spring Boot's AOP is **Spring AOP**: at startup Spring wraps matching beans in a **proxy**; calls from other beans hit the proxy,
+which runs your **advice** and then delegates to the real object. (Full AspectJ instead rewrites bytecode at compile/load time.
+We do not use it.)
+
+### Vocabulary (say these five words correctly and you pass half the AOP questions)
+| Word | Meaning | Here |
+|---|---|---|
+| Aspect | class with cross-cutting behaviour | `ExecutionTimeAspect`, `JobAuditAspect`, ... |
+| Advice | one method of an aspect: *what* and *when* | `@Around`, `@Before`, ... |
+| Pointcut | expression selecting *which* methods | `Pointcuts.jobControl()` |
+| Join point | one matched call (always a method execution in Spring AOP) | `SyncJobService.restart(5)` |
+| Weaving | linking aspects to targets | runtime proxies (Spring) vs bytecode (AspectJ) |
+
+### Files and why they exist (all new, package `com.moviepicker.aop`)
+| File | Concept it teaches |
+|---|---|
+| `Pointcuts` | **Named, reusable pointcuts**; `within`, `execution`, combining with `||` |
+| `LogExecutionTime` + `ExecutionTimeAspect` | **`@Around`** and **annotation-driven** pointcuts; binding the annotation to a parameter; `finally`; `@Order` |
+| `ApiRequestLogAspect` | **`@Before` / `@AfterReturning` / `@AfterThrowing`**, binding `returning`/`throwing`; what runs before `@RestControllerAdvice` |
+| `AuditLog` + `JobAuditAspect` + `web/AuditController` (`GET /api/audit`) | A realistic cross-cutting concern; **self-invocation** |
+| `TmdbCallMetricsAspect` | Pointcut on an **interface**; **Micrometer** timer; low-cardinality tags; **one call matched twice** (decorator + delegate) |
+| `pom.xml` | `spring-boot-starter-aspectj` (Boot 4's new name for `starter-aop`) |
+
+`MovieService.search/trending/picks` got `@LogExecutionTime`; nothing else in the existing code changed. That is the point.
+
+### The five advice types, in one table
+| Advice | Runs | Can change result / stop the call? | Used in |
+|---|---|---|---|
+| `@Before` | before the method (throwing here cancels the call) | no (can only veto by throwing) | `ApiRequestLogAspect` |
+| `@AfterReturning` | after a normal return; sees the result | no | `ApiRequestLogAspect` |
+| `@AfterThrowing` | after an exception; sees it (still rethrown) | no | `ApiRequestLogAspect` |
+| `@After` | always, like `finally`; sees neither | no | (not used) |
+| `@Around` | wraps the call; **you** call `proceed()` | **yes**: arguments, result, exception, skip the call | the other three aspects |
+
+Order for one call: `Around(before)` → `Before` → **method** → `AfterReturning`/`AfterThrowing` → `After` → `Around(after)`.
+Rule of thumb: use the weakest advice that does the job. `@Around` that forgets `proceed()` silently disables the method.
+
+### How the proxy changes what you inject
+```mermaid
+flowchart LR
+  C[JobController] -->|calls| P["CGLIB proxy of SyncJobService\n(what Spring injects)"]
+  P --> A1[ExecutionTimeAspect @Order 10]
+  A1 --> A2[ApiRequestLogAspect @Order 20]
+  A2 --> A3[JobAuditAspect @Order 30]
+  A3 --> T[real SyncJobService]
+  T -. "this.startSyncAsync()  (self-invocation: bypasses the proxy, NOT audited)" .-> T
+```
+Spring Boot defaults to **CGLIB class proxies** (`spring.aop.proxy-target-class=true`): the proxy is a generated *subclass*.
+So the class and its advised methods must not be `final`, and methods must not be `private`.
+`AopUtils.isAopProxy(bean)` and `AopUtils.getTargetClass(bean)` tell the truth where `bean.getClass()` lies
+(`AspectsIntegrationTest.beansThatMatchAPointcutAreReplacedByProxies`).
+
+### Ordering (`@Order`)
+Lower number = **outer** layer. `@Transactional` is itself an advisor with the *lowest* precedence, so our aspects (10–40) wrap
+*outside* the transaction. Consequence: `ExecutionTimeAspect` measures transaction open + commit too. Give it a high number and
+it would time only the method body inside the transaction. Same for audit: an audit entry is written even if the transaction
+later rolls back, unless you order it inside.
+
+### Self-invocation — the classic trap (and the test that proves it)
+`SyncJobService.startSync()` calls `this.startSyncAsync()`. The audit pointcut matches **both** methods, yet a scheduled
+`startSync` produces **one** audit entry, because the inner call never passes through the proxy
+(`AspectsIntegrationTest.aLaunchIsAuditedOnceEvenThough...`). Fixes if you need the inner call advised: move it to another bean
+(best), inject the bean into itself, or use AspectJ weaving. The same rule is why `@Transactional`, `@Async`, `@Cacheable` on a
+method called from the same class silently do nothing.
+
+### Things that are NOT advised (and why)
+* `private`, `static`, `final` methods and calls on `this` (proxy limits).
+* Objects you create with `new`: only Spring beans are proxied.
+* Spring Batch's own step/chunk internals: we deliberately aspect only services, controllers and the TMDB client; proxying the
+  `@StepScope` reader/writer beans would stack proxy on proxy for no benefit.
+* Bean-validation errors on controller parameters: Spring MVC raises them before it calls the controller method.
+
+### What appears where
+* Console: `c.moviepicker.aop.ExecutionTimeAspect : MovieService.search(..) took 12 ms`, and a separate `AUDIT` logger line per
+  launch/restart/stop/pause/resume.
+* With the `demo` profile (or `logging.level.com.moviepicker.aop.ApiRequestLogAspect=DEBUG`): `-> MovieController.get(..)`,
+  `<- ... returned MovieDto`, `!! ... threw MovieNotFoundException`.
+* `GET /api/audit`: the in-memory audit trail, newest first.
+* `GET /actuator/metrics/moviepicker.tmdb.calls` (then `?tag=client:ResilientTmdbClient`): **two** series per operation, the
+  retry decorator (what the job experienced) and the raw client (every attempt). Compare counts to see how often retries happen.
+
+### Common mistakes
+1. Expecting an aspect to fire on a call inside the same class (self-invocation).
+2. `@Around` without `proceed()`, or swallowing the exception: the contract of the method changes.
+3. A pointcut that is too wide (`execution(* *(..))`): proxies everything, slows startup, advises Spring internals.
+4. High-cardinality metric tags (ids, page numbers): unbounded memory.
+5. Logging arguments blindly in an aspect that also covers a login/payment method: leaks secrets.
+6. Putting business rules in an aspect: invisible logic. Aspects are for orthogonal, mechanical concerns.
+7. Forgetting `@Component` on an `@Aspect` class: it silently does nothing.
+
+### Check questions
+1. A scheduled sync calls `startSync`, which calls `startSyncAsync`. Why is there one audit entry and not two?
+2. Why is the timing aspect `@Order(10)` and what would change at `@Order(Ordered.LOWEST_PRECEDENCE)` on a `@Transactional` method?
+3. `moviepicker.tmdb.calls` shows 9 timings for `ResilientTmdbClient` but 12 for `MockTmdbClient`. What happened?
