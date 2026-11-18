@@ -321,6 +321,59 @@ Spring 6.1+ synchronous fluent HTTP client (replaces `RestTemplate` for new code
 Modular starters (`spring-boot-starter-restclient`, separate H2 console module), Jackson 3 (`tools.jackson.*`), test packages moved (`…webmvc.test.autoconfigure`), health classes in
 `org.springframework.boot.health.contributor`.
 
+### 3.7 AOP (Phase 10)
+
+**Q66. What is AOP and what problem does it solve?**
+Cross-cutting concerns (timing, audit, security, transactions, metrics) that would otherwise be copy-pasted into many classes and bury the business logic. You write the behaviour once (aspect) and select where it applies (pointcut). → `aop/` package, `docs/LEARNING_LOG.md` Phase 10.
+
+**Q67. Define aspect, advice, pointcut, join point, weaving.**
+Aspect = class with the behaviour; advice = one method of it (what + when); pointcut = expression choosing which calls; join point = one matched call (in Spring AOP always a method execution); weaving = linking aspect to target. → `aop/Pointcuts.java`.
+
+**Q68. How does Spring AOP work internally?**
+A bean post-processor (the auto-proxy creator) wraps each bean that some advisor matches in a runtime proxy. Callers get the proxy; it runs the interceptor chain (advice sorted by order) and then the target. Not bytecode weaving. → `AspectsIntegrationTest.beansThatMatchAPointcutAreReplacedByProxies`.
+
+**Q69. JDK dynamic proxy vs CGLIB?**
+JDK: implements the target's *interfaces*, so you can only inject the interface type. CGLIB: generates a *subclass*, so class and methods can't be `final`/`private`. Boot defaults to CGLIB (`spring.aop.proxy-target-class=true`), which is why injecting the concrete `MockTmdbClient` in `MockDataRotationListener` works.
+
+**Q70. Name the five advice types and when you use each.**
+`@Before`, `@AfterReturning`, `@AfterThrowing`, `@After` (finally), `@Around`. Use the weakest that works; only `@Around` can change arguments/result/exception or skip the call. → `ApiRequestLogAspect` (three observers), `ExecutionTimeAspect` (`@Around`).
+
+**Q71. What does an `@Around` advice have to do, and what goes wrong?**
+Call `proceed()` exactly when the target should run and return its result. Forgetting it silently disables the method; swallowing/wrapping the exception changes the method's contract; timing without `finally` misses failures. → `ExecutionTimeAspect`.
+
+**Q72. What is the self-invocation problem? Show me.**
+A call from a method to another method of the same object bypasses the proxy, so no advice runs (same reason `@Transactional`/`@Async` on an internally-called method do nothing). `SyncJobService.startSync → this.startSyncAsync` is not audited a second time. Fixes: move the method to another bean, self-inject, or AspectJ weaving. → `JobAuditAspect`, `AspectsIntegrationTest.aLaunchIsAuditedOnce...`.
+
+**Q73. In what order do several aspects run?**
+By `@Order`/`Ordered`, lower = outer. Unordered aspects have undefined relative order. `@Transactional`'s advisor has the lowest precedence, so aspects ordered 10–40 wrap outside the transaction (timing includes commit; audit survives a rollback). → `@Order` in each aspect.
+
+**Q74. Pointcut designators: `execution`, `within`, `@annotation`, `@within`, `bean`, `args`?**
+`execution(...)` method signature; `within(Type)` all methods of types; `@annotation(X)` methods carrying X; `@within(X)` types carrying X; `bean(name)` Spring-specific; `args(...)` by runtime argument type. We use `within(@RestController *)`, `execution(* TmdbClient.*(..))`, `@annotation(logExecutionTime)`. → `Pointcuts`, `ExecutionTimeAspect`.
+
+**Q75. Why a custom annotation instead of an `execution` pattern?**
+Intent is visible at the method, opt-in/out is one line, the aspect stays generic, and it survives renames/moves. This is how `@Transactional`, `@Cacheable`, `@Async` are built. → `LogExecutionTime`.
+
+**Q76. Why is the TMDB metric recorded twice per call?**
+The interface pointcut matches both `ResilientTmdbClient` (decorator) and the raw client it wraps; both are beans, so both are proxied. Outer = logical call incl. retries; inner = each attempt; the difference is your retry rate. → `TmdbCallMetricsAspect`, `AspectsIntegrationTest.everyTmdbClientCallIsTimed...`.
+
+**Q77. What can't Spring AOP advise?**
+Private/static/final methods, `this`-calls, objects created with `new`, and (for CGLIB) final classes. Full AspectJ (compile-time/load-time weaving) can advise all of those, plus field access and constructors, at the cost of a build plugin or agent.
+
+**Q78. Spring AOP vs AspectJ — when would you pick AspectJ?**
+Only when you need non-Spring objects, field/constructor join points, or `this`-call interception without refactoring, and accept bytecode weaving. For service-level concerns in a Spring app, Spring AOP is simpler and enough.
+
+**Q79. How would you test an aspect?**
+Unit-level: `AspectJProxyFactory` wraps a plain target without Spring (`ExecutionTimeAspectTest`). Integration: assert the effects in the real context: the audit trail, the meter, the log lines (`AspectsIntegrationTest`). Also assert the negative (an un-annotated method is not advised).
+
+**Q80. Risks of AOP in a codebase?**
+Invisible behaviour (hard to debug), proxy/self-invocation surprises, too-wide pointcuts slowing startup or advising framework beans, order-dependent bugs, leaking sensitive arguments into logs, high-cardinality metric tags. Keep aspects mechanical and orthogonal; no business rules.
+
+**Q81. How does `@Transactional` relate to AOP?**
+It *is* AOP: a `TransactionInterceptor` advisor applied by a proxy around the bean. That is why self-invocation breaks it, why `private` methods can't be transactional, and why aspect order relative to it matters. → `MovieService` (`@Transactional(readOnly = true)`) carries both the transaction advisor and our timing aspect on one proxy.
+
+**Q82. Why was `spring-boot-starter-aop` replaced?**
+Boot 4 renamed it `spring-boot-starter-aspectj` (it brings the AspectJ weaver for the annotations and pointcut parser; Spring AOP still proxies at runtime). → `pom.xml`.
+
 ---
 
 ## 4. Scenario questions
@@ -371,6 +424,13 @@ of unchanged rows (we touch `lastSyncedAt`/`@Version` every run — skip unchang
 ### S7. "How do you know the sync is healthy in production?"
 One log line per run (`SYNC RUN … inserted= updated= skipped=`), `SYNC_RUN` table, `/actuator/health` `lastSync`, alert on FAILED/absence of a run, `REJECTED_RECORD` growth, metrics
 (`spring.batch.*` timers), dashboards on duration/skips.
+
+### S8. "Management wants an audit trail of who started, restarted and stopped the sync. Touch as little code as possible."
+1. Cross-cutting and identical for every caller (REST, scheduler, startup runner) → an aspect, not code in each caller.
+2. Pointcut on the control methods (`Pointcuts.jobControl()`), `@Around` so we see success **and** failure, rethrow untouched so API status codes don't change.
+3. Persist to a table/audit topic in production (ours is in-memory and bounded); add the user from `SecurityContext` once security exists.
+4. Gotchas to mention unprompted: self-invocation (one entry per outer call), aspect order vs transaction, never log secrets, an audit write that fails must not break the business call.
+Proof: `JobAuditAspect`, `GET /api/audit`, `AspectsIntegrationTest`.
 
 ---
 

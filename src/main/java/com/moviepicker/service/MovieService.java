@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import com.moviepicker.aop.LogExecutionTime;
 import com.moviepicker.domain.Genre;
 import com.moviepicker.domain.Movie;
 import com.moviepicker.domain.TrendingSnapshot;
@@ -57,6 +58,7 @@ public class MovieService {
 		this.clock = clock;
 	}
 
+	@LogExecutionTime
 	public PageResponse<MovieDto> search(String genre, Double minRating, Integer year, String language, String q,
 			Pageable pageable) {
 		for (Sort.Order o : pageable.getSort()) {
@@ -82,6 +84,7 @@ public class MovieService {
 	}
 
 	/** Latest snapshot of a list in rank order, with movement versus the snapshot before it. */
+	@LogExecutionTime
 	public TrendingResponse trending(String listName) {
 		TmdbList list;
 		try {
@@ -115,6 +118,7 @@ public class MovieService {
 	}
 
 	/** Top movies by {@link PickScorer}, optionally within one genre. Scored in memory (fine at this scale; see notes). */
+	@LogExecutionTime(slowMs = 300)
 	public List<PickDto> picks(String genre, int limit) {
 		List<Movie> candidates = movies.findAll(MovieSpecifications.filter(genre, null, null, null, null));
 		double mean = candidates.stream().filter(m -> m.getVoteCount() > 0).mapToDouble(Movie::getVoteAverage)

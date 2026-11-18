@@ -123,7 +123,9 @@
       "name": "Ops",
       "item": [
         { "name": "About (TMDB attribution)", "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/about" } },
-        { "name": "Health (incl. last sync)", "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/actuator/health" } }
+        { "name": "Health (incl. last sync)", "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/actuator/health" } },
+        { "name": "Audit trail (written by JobAuditAspect)", "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/audit?limit=20" } },
+        { "name": "TMDB call timings (written by TmdbCallMetricsAspect)", "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/actuator/metrics/moviepicker.tmdb.calls" } }
       ]
     }
   ]

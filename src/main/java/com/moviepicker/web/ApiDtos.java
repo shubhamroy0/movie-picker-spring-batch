@@ -59,6 +59,9 @@ public final class ApiDtos {
 	public record MessageDto(String message) {
 	}
 
+	public record AuditEntryDto(Instant at, String action, String argument, String outcome, String detail) {
+	}
+
 	public record AboutDto(String application, String dataSource, String attribution, String tmdbUrl, String notice) {
 	}
 }
